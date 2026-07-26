@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------------
+# Personal health data — MUST NOT be committed
+# ---------------------------------------------------------------------------
+# The raw Samsung Health export(s) you drop into data/
+data/
+samsunghealth_*/
+
+# Generated result files (contain personal medical data)
+health_export_*.json
+*.min.json
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# ---------------------------------------------------------------------------
+# OS / editor cruft
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+# Windows "mark of the web" side-car files that ship inside the export
+*:Zone.Identifier
+.idea/
+*.swp

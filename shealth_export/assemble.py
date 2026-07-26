@@ -1,0 +1,93 @@
+"""Orchestrate extraction and assemble the final self-describing JSON document."""
+
+from __future__ import annotations
+
+import json
+import os
+from collections import Counter
+from datetime import date, datetime
+
+from . import coverage, legend, timeutil
+from .csvio import csv_path, read_table
+from .discovery import Export
+from .extract import Context, Extractor
+from .registry import INCLUDED
+from . import __version__
+
+
+def detect_primary_offset(export: Export) -> str:
+    """Most common UTC offset among heart-rate rows (a dense, always-present table)."""
+    path = csv_path(export.path, "com.samsung.shealth.tracker.heart_rate", export.timecode)
+    if path:
+        table = read_table(path, "com.samsung.health.heart_rate.")
+        offsets = Counter(r.get("time_offset") for r in table.rows if r.get("time_offset"))
+        if offsets:
+            return offsets.most_common(1)[0][0]
+    return "UTC+0000"
+
+
+def build_document(export: Export, n_days: int, anchor: date) -> tuple[dict, dict]:
+    primary_offset = detect_primary_offset(export)
+    window = timeutil.Window.last_n_days(anchor, n_days)
+    ctx = Context(export_dir=export.path, timecode=export.timecode,
+                  window=window, primary_offset=primary_offset, anchor_date=anchor)
+    extractor = Extractor(ctx)
+
+    results = {}
+    patient_profile: dict = {}
+    data: dict = {}
+    for dt in INCLUDED:
+        res = extractor.run(dt)
+        results[dt.id] = res
+        if dt.handler == "user_profile":
+            patient_profile = res.payload
+        else:
+            data.setdefault(dt.category, {})[dt.subkey] = res.payload
+
+    manifest = coverage.build(export.path, export.timecode, results)
+
+    document = {
+        "metadata": {
+            "generated_at": datetime.now().astimezone().replace(microsecond=0).isoformat(),
+            "tool": "shealth_export",
+            "tool_version": __version__,
+            "source_export": export.name,
+            "source_export_timecode": export.timecode,
+            "window": window.as_dict(n_days, primary_offset),
+            "anchor_date": anchor.isoformat(),
+            "detail_level": "full (per-minute where available)",
+            "scope": "all medical data; technical/config/GPS/identifiers excluded",
+            "language": "en",
+        },
+        "patient_profile": patient_profile,
+        "legend": legend.build(),
+        "coverage_manifest": manifest,
+        "data": data,
+    }
+    return document, manifest
+
+
+def _dump(document: dict, path: str, minified: bool) -> int:
+    with open(path, "w", encoding="utf-8") as f:
+        if minified:
+            json.dump(document, f, ensure_ascii=False, separators=(",", ":"))
+        else:
+            json.dump(document, f, ensure_ascii=False, indent=2)
+    return os.path.getsize(path)
+
+
+def min_path(out_path: str) -> str:
+    """Companion minified path: foo.json -> foo.min.json."""
+    return out_path[:-5] + ".min.json" if out_path.endswith(".json") else out_path + ".min.json"
+
+
+def write(document: dict, out_path: str, minify: bool = True) -> tuple[int, str | None, int]:
+    """Write the pretty JSON and (by default) a compact ``.min.json`` companion.
+
+    Returns (pretty_size, min_path_or_None, min_size).
+    """
+    size = _dump(document, out_path, minified=False)
+    if not minify:
+        return size, None, 0
+    mp = min_path(out_path)
+    return size, mp, _dump(document, mp, minified=True)
