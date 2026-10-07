@@ -8,8 +8,8 @@ analyses it.
   accounted for in a coverage manifest (included / excluded-with-reason / unknown).
 - **Private by design.** Only medical fields are read; device ids, Bluetooth/MAC,
   GPS routes, names and app config never leave the CSV.
-- **Self-describing.** The output embeds a legend (units, code tables, caveats) plus
-  a coverage manifest, so it is readable even without this repo.
+- **Self-describing.** The output embeds a legend (units, code tables, per-field
+  caveats) plus a coverage manifest, so it is readable even without this repo.
 - **Zero dependencies.** Pure Python standard library.
 
 ---
@@ -22,8 +22,8 @@ analyses it.
 
 1. Export your data from the Samsung Health app
    (*Settings → Download personal data*) and unzip it.
-2. Put the export folder (named like `samsunghealth_v-2841_20260722105897`) inside a
-   `data/` directory next to `export_health.py`.
+2. Put the export folder (named like `samsunghealth_<account>_20260722105897`) inside
+   a `data/` directory next to `export_health.py`.
 3. Run:
 
 ```bash
@@ -52,24 +52,27 @@ compact `….min.json` (~half the size, best for uploading to an AI).
 | `--data-dir DIR` | Where to look for export folders. Default: `data`. |
 | `--anchor YYYY-MM-DD` | End date of the window. Default: the export's own date. |
 | `--no-minify` | Do not also write the compact `.min.json`. |
-| `--selftest` | Run correctness self-checks (incl. an empirical timezone proof) and exit. |
+| `--selftest` | Run correctness self-checks (incl. an empirical timezone proof on every per-minute table) and exit. |
 
-If several exports sit in `data/`, the newest (by timecode) is used automatically.
+If several exports sit in `data/`, the newest (by timecode) is used automatically. A
+renamed folder passed via `--folder` still works: the timecode is read from its CSV
+names.
 
 ## What's in the output
 
 ```
-metadata          export info, the day window, units, language
+metadata          tool version, the day window, UTC offsets in it, data cutoff
 patient_profile   sex, age, height, latest weight, BMI, unit prefs (name/ids stripped)
-legend            units per field, decoded code tables, interpretation caveats
-coverage_manifest every datatype in the source and what happened to it
+legend            per-section/per-field units, code tables, interpretation caveats
+coverage_manifest every datatype and companion-file kind in the source and what
+                  happened to it (included / consumed / excluded + reason / UNKNOWN)
 data              the measurements, grouped by clinical category
 ```
 
 Categories under `data`: `cardiovascular`, `respiratory`, `body`, `sleep`,
 `activity`, `stress`, `readiness`, `mental`, `exercise`, `nutrition`. High-resolution
 per-minute series are nested under `detail` / `live_data` / `recovery_samples` /
-`hypnogram`.
+`detail_10min` / `hypnogram`.
 
 ### Two things to understand when reading it
 
@@ -81,6 +84,10 @@ per-minute series are nested under `detail` / `live_data` / `recovery_samples` /
   was *not measured in this period*, not "normal". Blood pressure, glucose and food
   logs in a typical recent window are often empty for this reason — the manifest makes
   that explicit so a reader never mistakes missing data for a healthy reading.
+- **One row per day, and the last day is partial.** Samsung keeps a daily row per
+  device; the tool keeps one row per day (for steps: Samsung's merge of all devices),
+  so totals are never double-counted. The export day itself is marked
+  `partial_day: true` (see `metadata.window.end_day_partial` / `data_cutoff`).
 
 ## Sharing with a doctor
 
@@ -98,13 +105,13 @@ A small package with one responsibility per module (`shealth_export/`):
 
 | Module | Responsibility |
 |---|---|
-| `registry.py` | **Declarative spec** of every datatype: fields, units, codes, binning. Add a datatype = add a data entry, not code. |
+| `registry.py` | **Declarative spec** of every datatype: fields, units, casts, per-field notes, binning, one-row-per-day rules, and the status of every companion-file kind. Add a datatype = add a data entry, not code. |
 | `csvio.py` | Samsung CSV reader (BOM, metadata line, namespaced columns, ragged rows). |
 | `timeutil.py` | Pure time helpers: UTC-string + offset → local ISO, epoch-ms, day windowing. |
-| `binning.py` | Load & map the high-resolution binning JSON, filtered to the window. |
-| `extract.py` | Generic extractor + special handlers (sleep hypnogram, food names, dedup, profile). |
-| `enums.py` | Code → label tables (sleep stages, meal/exercise types, …). |
-| `coverage.py` | Build the coverage manifest. |
+| `binning.py` | Load & map the high-resolution companion JSON of a record (exact duplicate points dropped). |
+| `extract.py` | Generic extractor + special handlers (sleep, daily steps + 10-min bins, exercise extras, recovery HR, food names, profile). |
+| `enums.py` | Code → label tables from the Samsung SDK (sleep stages, meal/exercise/glucose/food-unit codes, …). |
+| `coverage.py` | Build the coverage manifest (CSV tables + companion JSON/file kinds). |
 | `legend.py` | Build the embedded, self-describing legend. |
 | `assemble.py` | Assemble the final document and write pretty + minified. |
 | `discovery.py` | Find the newest export folder. |
@@ -112,7 +119,9 @@ A small package with one responsibility per module (`shealth_export/`):
 | `selftest.py` | Unit checks + empirical timezone proof against real data. |
 
 Privacy is enforced structurally: only columns listed in `registry.py` are read, so
-identifiers and GPS can't leak. To include a new field or datatype, edit the registry.
+identifiers, free text and GPS can't leak (the device registry is read internally only
+to label rows `phone` / `watch`). To include a new field or datatype, edit the
+registry.
 
 ## Disclaimer
 

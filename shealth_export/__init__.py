@@ -8,4 +8,4 @@ manifest so nothing is ever dropped silently.
 See INSTRUCTIONS_FOR_AI.md for how to read the produced file.
 """
 
-__version__ = "1.0.0"
+__version__ = '1.1.0'

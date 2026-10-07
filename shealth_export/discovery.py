@@ -1,8 +1,9 @@
 """Find the export folder to parse.
 
-A Samsung Health export folder is named ``samsunghealth_v-<ver>_<timecode>``
-(e.g. ``samsunghealth_v-2841_20260722105897``). We pick the one with the
-newest ``timecode`` inside the given data directory.
+A Samsung Health export folder is named ``samsunghealth_<account>_<timecode>``
+(e.g. ``samsunghealth_<account>_20260722105897``). We pick the one with the
+newest ``timecode`` inside the given data directory. A renamed folder still
+works: the timecode is then read from the CSV file names inside it.
 """
 
 from __future__ import annotations
@@ -11,7 +12,9 @@ import os
 import re
 from dataclasses import dataclass
 
-_NAME_RE = re.compile(r"^samsunghealth_.*?_(\d{8,})$")
+from .csvio import detect_timecode
+
+_NAME_RE = re.compile(r'^samsunghealth_.*?_(\d{8,})$')
 
 
 @dataclass(frozen=True)
@@ -31,18 +34,23 @@ def find_latest_export(data_dir: str) -> Export | None:
             continue
         m = _NAME_RE.match(name)
         if m:
-            candidates.append(Export(path=full, name=name, timecode=m.group(1)))
+            candidates.append(Export(path=full, name=name,
+                                     timecode=m.group(1)))
     if not candidates:
         return None
     return max(candidates, key=lambda e: e.timecode)
 
 
 def as_export(folder: str) -> Export | None:
-    """Wrap an explicit ``--folder`` path as an :class:`Export`."""
-    folder = folder.rstrip("/")
+    """Wrap an explicit ``--folder`` path as an :class:`Export`.
+
+    Returns None when the folder is missing or contains no Samsung CSVs.
+    """
+    folder = folder.rstrip('/')
     if not os.path.isdir(folder):
         return None
     name = os.path.basename(folder)
-    m = _NAME_RE.match(name)
-    timecode = m.group(1) if m else ""
+    timecode = detect_timecode(folder)
+    if not timecode:
+        return None
     return Export(path=folder, name=name, timecode=timecode)

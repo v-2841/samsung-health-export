@@ -29,27 +29,42 @@ _UTC = timezone.utc
 
 
 def parse_offset(offset_str: str | None) -> timezone | None:
-    """``"UTC+0400"`` -> ``timezone(+4h)``. Returns None if unparseable/empty."""
+    """``'UTC+0400'`` -> ``timezone(+4h)``; None if unparseable/empty.
+
+    Also accepts ``UTC+04:00``, ``UTC+4`` and ``GMT`` prefixes.
+    """
     if not offset_str:
         return None
-    s = offset_str.strip()
-    if not s.upper().startswith("UTC") or len(s) < 8:
+    s = offset_str.strip().upper()
+    for prefix in ('UTC', 'GMT'):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    else:
         return None
-    sign = 1 if s[3] == "+" else -1
-    try:
-        hours = int(s[4:6])
-        minutes = int(s[6:8])
-    except ValueError:
+    if not s:
+        return timezone.utc
+    if s[0] not in '+-':
+        return None
+    sign = 1 if s[0] == '+' else -1
+    body = s[1:].replace(':', '')
+    if not body.isdigit() or len(body) not in (1, 2, 3, 4):
+        return None
+    if len(body) <= 2:
+        hours, minutes = int(body), 0
+    else:
+        hours, minutes = int(body[:-2]), int(body[-2:])
+    if hours > 14 or minutes >= 60:
         return None
     return timezone(sign * timedelta(hours=hours, minutes=minutes))
 
 
 def parse_utc_string(s: str) -> datetime | None:
-    """Parse a Samsung CSV wall-clock string (which is in UTC) to an aware UTC datetime."""
+    """Parse a Samsung CSV wall-clock string (stored in UTC) as aware UTC."""
     if not s:
         return None
     s = s.strip()
-    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+    for fmt in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
         try:
             return datetime.strptime(s, fmt).replace(tzinfo=_UTC)
         except ValueError:
@@ -63,7 +78,7 @@ def _to_offset(dt_utc: datetime, offset_str: str | None) -> datetime:
 
 
 def utc_string_to_iso(s: str, offset_str: str | None) -> str | None:
-    """CSV UTC string + offset -> local ISO-8601 like ``2025-01-09T01:00:00+04:00``."""
+    """UTC string + offset -> local ISO (``2025-01-09T01:00:00+04:00``)."""
     dt = parse_utc_string(s)
     if dt is None:
         return None
@@ -71,7 +86,7 @@ def utc_string_to_iso(s: str, offset_str: str | None) -> str | None:
 
 
 def utc_string_to_local_date(s: str, offset_str: str | None) -> date | None:
-    """Local calendar date the record belongs to (UTC string shifted by offset)."""
+    """Local calendar date of a record (UTC string shifted by its offset)."""
     dt = parse_utc_string(s)
     if dt is None:
         return None
@@ -95,16 +110,16 @@ def epoch_ms_to_local_date(ms: int, offset_str: str | None) -> date | None:
 
 def parse_day_time(s: str) -> date | None:
     """``day_time`` string (local midnight) -> its calendar date."""
-    dt = parse_utc_string(s)  # same textual format; we only keep the date part
+    dt = parse_utc_string(s)  # same text format; only the date part is kept
     return dt.date() if dt else None
 
 
 def timecode_to_date(timecode: str) -> date | None:
-    """Export folder timecode (``20260722105897``) -> its date (first 8 digits)."""
+    """Export timecode (``20260722105897``) -> its date (first 8 digits)."""
     if not timecode or len(timecode) < 8 or not timecode[:8].isdigit():
         return None
     try:
-        return datetime.strptime(timecode[:8], "%Y%m%d").date()
+        return datetime.strptime(timecode[:8], '%Y%m%d').date()
     except ValueError:
         return None
 
@@ -117,7 +132,7 @@ class Window:
     end_date: date
 
     @classmethod
-    def last_n_days(cls, anchor: date, n_days: int) -> "Window":
+    def last_n_days(cls, anchor: date, n_days: int) -> 'Window':
         # "last N days" including the anchor day itself
         n = max(1, n_days)
         return cls(anchor - timedelta(days=n - 1), anchor)
@@ -127,8 +142,8 @@ class Window:
 
     def as_dict(self, n_days: int, primary_offset: str | None) -> dict:
         return {
-            "n_days": n_days,
-            "start_date": self.start_date.isoformat(),
-            "end_date": self.end_date.isoformat(),
-            "primary_utc_offset": primary_offset or "UTC+0000",
+            'n_days': n_days,
+            'start_date': self.start_date.isoformat(),
+            'end_date': self.end_date.isoformat(),
+            'primary_utc_offset': primary_offset or 'UTC+0000',
         }
